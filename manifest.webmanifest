@@ -1,0 +1,10 @@
+{
+  "name": "Gamevote",
+  "short_name": "Gamevote",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#12131c",
+  "theme_color": "#12131c",
+  "lang": "de"
+}
