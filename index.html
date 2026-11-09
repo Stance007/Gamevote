@@ -45,6 +45,7 @@ label{display:block;font-size:.88rem;color:var(--mute);margin:0 0 4px}
 .w{display:flex;gap:8px;align-items:center;font-size:.9rem}.w .mark{width:10px;height:10px;border-radius:50%;flex:none}
 .w .mute{color:var(--mute)}
 .row2{display:flex;gap:8px;align-items:flex-start}.row2 input{flex:1;margin:0 0 10px}.row2 .btn{flex:none;min-width:48px;padding:11px 0;margin-bottom:10px}
+.push{border-color:var(--blue)}.push p{margin:6px 0 10px}
 .toast{position:fixed;left:14px;right:14px;bottom:max(14px,env(safe-area-inset-bottom));max-width:532px;margin:auto;background:#3a1d24;border:1px solid var(--no);padding:12px;border-radius:10px;z-index:9}
 .empty{color:var(--mute);padding:18px 4px}
 .past{opacity:.8}.past .game{font-size:1rem}
@@ -115,6 +116,55 @@ async function start() {
   if (!p) return showJoin();
   me = p;
   showMain();
+}
+
+/* ---------- Push ---------- */
+const VAPID_PUBLIC = "BNmbwk2e2TX-y7jL7wpoZuHXEU6RVYOxXCiwlxEmb2xaBn_wAhTBLa6IJUxMLn7989SGopKTE_WAa2snc91ELpc";
+function b64ToU8(b) {
+  const s = (b + "=".repeat((4 - (b.length % 4)) % 4)).replace(/-/g, "+").replace(/_/g, "/");
+  return Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+}
+function pushState() {
+  if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) return "unsupported";
+  return Notification.permission; // "default" | "granted" | "denied"
+}
+async function syncPush() {
+  if (pushState() !== "granted") return false;
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToU8(VAPID_PUBLIC) });
+    const j = sub.toJSON();
+    const { error } = await sb.from("push_subscriptions").upsert(
+      { endpoint: j.endpoint, user_id: me.id, p256dh: j.keys.p256dh, auth: j.keys.auth }, { onConflict: "endpoint" });
+    return !error;
+  } catch (e) { return false; }
+}
+async function enablePush() {
+  const perm = await Notification.requestPermission();
+  if (perm !== "granted") { drawPush(); return toast("Benachrichtigungen sind nicht erlaubt. Du kannst sie in den Browser-Einstellungen der Seite freigeben."); }
+  const ok = await syncPush();
+  if (!ok) toast("Die Benachrichtigungen konnten nicht eingerichtet werden. Bitte versuch es noch einmal.");
+  drawPush();
+}
+function drawPush() {
+  const box = document.getElementById("pushbox");
+  if (!box) return;
+  const st = pushState();
+  if (st === "granted") return box.replaceChildren();
+  const ios = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  const body = [];
+  if (st === "unsupported") {
+    body.push(h("p", { class: "sub" }, ios
+      ? "So bekommst du Benachrichtigungen: Tippe in Safari auf Teilen, dann auf \"Zum Home-Bildschirm\". Öffne Gamevote danach vom Home-Bildschirm aus."
+      : "Dieser Browser unterstützt keine Benachrichtigungen. Öffne Gamevote am besten in Chrome."));
+  } else if (st === "denied") {
+    body.push(h("p", { class: "sub" }, "Benachrichtigungen sind blockiert. Öffne die Einstellungen der Seite in deinem Browser und erlaube sie dort."));
+  } else {
+    body.push(h("p", { class: "sub" }, "Damit du mitbekommst, wenn jemand zocken will, schalte Benachrichtigungen ein. Es gibt keine Dauer-Nachrichten, nur wenn jemand einen Vorschlag sendet."),
+      h("button", { class: "btn small", onclick: enablePush }, "Benachrichtigungen einschalten"));
+  }
+  box.replaceChildren(h("div", { class: "card push" }, h("strong", {}, "Benachrichtigungen sind aus"), ...body));
 }
 
 /* ---------- Beitritt ---------- */
@@ -199,9 +249,12 @@ function showMain() {
       h("div", { class: "me" }, av(me), h("div", {}, h("h1", {}, "Gamevote"), h("div", { class: "sub" }, me.name))),
       h("button", { class: "btn", onclick: () => { form.hidden = !form.hidden; } }, "Ich will zocken")
     ),
+    h("div", { id: "pushbox" }),
     form,
     h("div", { id: "list" })
   );
+  drawPush();
+  syncPush();
   refresh();
   clearInterval(timer);
   timer = setInterval(() => { if (!document.hidden && !document.querySelector("#list input:focus")) refresh(true); }, 30000);
@@ -311,6 +364,7 @@ function card(p, isPast) {
   return el;
 }
 
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
 start();
 </script>
 </body>
