@@ -46,6 +46,7 @@ label{display:block;font-size:.88rem;color:var(--mute);margin:0 0 4px}
 .w .mute{color:var(--mute)}
 .row2{display:flex;gap:8px;align-items:flex-start}.row2 input{flex:1;margin:0 0 10px}.row2 .btn{flex:none;min-width:48px;padding:11px 0;margin-bottom:10px}
 .push{border-color:var(--blue)}.push p{margin:6px 0 10px}
+.guide{border-color:var(--blue)}.guide p{margin:6px 0 10px}.guide ol{margin:8px 0 12px;padding-left:20px}.guide li{margin:5px 0}
 .toast{position:fixed;left:14px;right:14px;bottom:max(14px,env(safe-area-inset-bottom));max-width:532px;margin:auto;background:#3a1d24;border:1px solid var(--no);padding:12px;border-radius:10px;z-index:9}
 .empty{color:var(--mute);padding:18px 4px}
 .past{opacity:.8}.past .game{font-size:1rem}
@@ -167,6 +168,55 @@ function drawPush() {
   box.replaceChildren(h("div", { class: "card push" }, h("strong", {}, "Benachrichtigungen sind aus"), ...body));
 }
 
+/* ---------- Installieren ---------- */
+let installEvt = null;
+window.addEventListener("beforeinstallprompt", (e) => {
+  e.preventDefault();
+  installEvt = e;
+  const b = document.getElementById("installbtn");
+  if (b) b.hidden = false;
+});
+function isStandalone() {
+  return navigator.standalone === true || matchMedia("(display-mode: standalone)").matches;
+}
+function installGuide(code) {
+  if (isStandalone()) return null;
+  const ua = navigator.userAgent;
+  const ios = /iphone|ipad|ipod/i.test(ua);
+  const android = /android/i.test(ua);
+  if (!ios && !android) return null;
+  if (ios) {
+    return h("div", { class: "card guide" },
+      h("strong", {}, "Zuerst als App installieren"),
+      h("p", { class: "sub" }, "Auf dem iPhone kommen Benachrichtigungen nur in der installierten App an. Installiere Gamevote, bevor du beitrittst. Sonst musst du dich in der App noch einmal anmelden."),
+      h("ol", {},
+        h("li", {}, "Tippe in Safari auf Teilen (Quadrat mit Pfeil). Bei manchen iPhones steckt es hinter den drei Punkten."),
+        h("li", {}, "Wähle \"Zum Home-Bildschirm\". Falls du ihn nicht siehst, tippe vorher auf \"Mehr\"."),
+        h("li", {}, "Tippe auf \"Hinzufügen\"."),
+        h("li", {}, "Öffne Gamevote über das neue Symbol auf dem Home-Bildschirm und tritt dort bei.")
+      ),
+      code ? h("p", { class: "sub" }, "Dein Einladungscode für die App: " + code) : null
+    );
+  }
+  const btn = h("button", { class: "btn small", id: "installbtn", hidden: !installEvt, onclick: async () => {
+    if (!installEvt) return;
+    installEvt.prompt();
+    await installEvt.userChoice;
+    installEvt = null;
+    btn.hidden = true;
+  } }, "Jetzt installieren");
+  return h("div", { class: "card guide" },
+    h("strong", {}, "Als App installieren"),
+    h("p", { class: "sub" }, "So liegt Gamevote auf deinem Startbildschirm. Beitreten kannst du auch ohne Installation."),
+    btn,
+    h("ol", {},
+      h("li", {}, "Tippe in Chrome oben rechts auf die drei Punkte."),
+      h("li", {}, "Wähle \"App installieren\" oder \"Zum Startbildschirm hinzufügen\"."),
+      h("li", {}, "Bestätige mit \"Installieren\".")
+    )
+  );
+}
+
 /* ---------- Beitritt ---------- */
 function showJoin() {
   let avatar = null;
@@ -207,6 +257,7 @@ function showJoin() {
   put(app,
     h("h1", {}, "Gamevote"),
     h("p", { class: "sub" }, "Wer zockt heute? Gib deinen Namen ein und mach ein Foto, dann bist du dabei."),
+    installGuide(code),
     h("label", { for: "name" }, "Dein Name"), name,
     h("label", { for: "foto" }, "Dein Foto"), prev, file,
     code ? null : [h("label", { for: "code" }, "Einladungscode"), codeIn],
