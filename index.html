@@ -43,6 +43,7 @@ label{display:block;font-size:.88rem;color:var(--mute);margin:0 0 4px}
 .who{display:flex;flex-direction:column;gap:6px;margin-top:10px}
 .w{display:flex;gap:8px;align-items:center;font-size:.9rem}.w .mark{width:10px;height:10px;border-radius:50%;flex:none}
 .w .mute{color:var(--mute)}
+.row2{display:flex;gap:8px;align-items:flex-start}.row2 input{flex:1;margin:0 0 10px}.row2 .btn{flex:none;min-width:48px;padding:11px 0;margin-bottom:10px}
 .toast{position:fixed;left:14px;right:14px;bottom:max(14px,env(safe-area-inset-bottom));max-width:532px;margin:auto;background:#3a1d24;border:1px solid var(--no);padding:12px;border-radius:10px;z-index:9}
 .empty{color:var(--mute);padding:18px 4px}
 .past{opacity:.8}.past .game{font-size:1rem}
@@ -202,11 +203,11 @@ function showMain() {
   );
   refresh();
   clearInterval(timer);
-  timer = setInterval(() => { if (!document.hidden && !document.querySelector("#list input:focus")) refresh(); }, 30000);
-  document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
+  timer = setInterval(() => { if (!document.hidden && !document.querySelector("#list input:focus")) refresh(true); }, 30000);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(true); });
 }
 
-async function refresh() {
+async function refresh(auto = false) {
   const since = new Date(Date.now() - 14 * 864e5).toISOString();
   const [pr, pp] = await Promise.all([
     sb.from("profiles").select("*"),
@@ -220,12 +221,12 @@ async function refresh() {
   R = rs.data || [];
   const dl = document.getElementById("games");
   if (dl) dl.replaceChildren(...[...new Set(props.map((x) => x.game))].map((g) => h("option", { value: g })));
-  drawList();
+  drawList(auto);
 }
 
-function drawList() {
+function drawList(auto = false) {
   const list = document.getElementById("list");
-  if (!list || document.querySelector("#list input:focus")) return;
+  if (!list || (auto && document.querySelector("#list input:focus"))) return;
   const now = Date.now() - 2 * 36e5;
   const next = props.filter((x) => +new Date(x.start_time) >= now);
   const past = props.filter((x) => +new Date(x.start_time) < now).reverse();
@@ -260,15 +261,25 @@ function card(p, isPast) {
   if (!isPast) {
     const note = h("input", { class: "note", placeholder: "Notiz, z. B. komme erst gegen 22 Uhr", value: (mine && mine.note) || "", maxlength: "140" });
     const alt = h("input", { class: "alt", placeholder: "Gegenvorschlag, z. B. lieber Minecraft", value: (mine && mine.counter_game) || "", maxlength: "60" });
-    const btn = (label, key) => h("button", { class: key + (mine && mine.answer === key ? " on" : ""), onclick: async () => {
+    const save = async (patch) => {
       const { error } = await sb.from("responses").upsert({
-        proposal_id: p.id, user_id: me.id, answer: key,
-        note: note.value.trim() || null, counter_game: alt.value.trim() || null, updated_at: new Date().toISOString()
+        proposal_id: p.id, user_id: me.id,
+        answer: (mine && mine.answer) || "later",
+        note: mine ? mine.note : null,
+        counter_game: mine ? mine.counter_game : null,
+        ...patch, updated_at: new Date().toISOString()
       });
-      if (error) return toast("Antwort konnte nicht gespeichert werden.");
+      if (error) return toast("Das konnte nicht gespeichert werden.");
+      if (document.activeElement) document.activeElement.blur();
       refresh();
-    } }, label);
-    el.append(h("div", { class: "ans" }, btn("Ja", "yes"), btn("Später", "later"), btn("Nein", "no")), note, alt);
+    };
+    const btn = (label, key) => h("button", { class: key + (mine && mine.answer === key ? " on" : ""), onclick: () => save({ answer: key }) }, label);
+    const ok = (inp, field) => h("button", { class: "btn small", title: "Speichern", "aria-label": "Speichern", onclick: () => save({ [field]: inp.value.trim() || null }) }, "✓");
+    el.append(
+      h("div", { class: "ans" }, btn("Ja", "yes"), btn("Später", "later"), btn("Nein", "no")),
+      h("div", { class: "row2" }, note, ok(note, "note")),
+      h("div", { class: "row2" }, alt, ok(alt, "counter_game"))
+    );
   }
 
   if (rs.length) el.append(h("div", { class: "who" }, rs.map((r) => {
