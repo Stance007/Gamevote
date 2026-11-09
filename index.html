@@ -346,7 +346,7 @@ async function showStats(tab = "group") {
     onclick: () => { if (tab !== key) showStats(key); }
   }, label);
   app.replaceChildren(
-    h("div", { class: "top" }, h("h1", {}, "Statistik"), h("button", { class: "btn ghost small", onclick: showMain }, "Zurück")),
+    h("div", { class: "top" }, h("h1", {}, "Statistik " + new Date().getFullYear()), h("button", { class: "btn ghost small", onclick: showMain }, "Zurück")),
     h("div", { class: "row", style: "margin:0 0 6px" }, tabBtn("group", "Gruppe"), tabBtn("mine", "Meine Statistik")),
     body
   );
@@ -392,18 +392,18 @@ async function showStats(tab = "group") {
   );
 }
 
+const VERLAUF_TAGE = 30; // so viele Tage Verlauf zeigt die App (ältere Daten bleiben in der Datenbank)
 async function refresh(auto = false) {
-  const since = new Date(Date.now() - 14 * 864e5).toISOString();
+  const since = new Date(Date.now() - VERLAUF_TAGE * 864e5).toISOString();
   const [pr, pp] = await Promise.all([
     sb.from("profiles").select("*"),
-    sb.from("proposals").select("*").is("deleted_at", null).gte("start_time", since).order("start_time")
+    // Antworten gleich mitladen: eine Abfrage statt zwei, und keine lange ID-Liste in der URL
+    sb.from("proposals").select("*, responses(*)").is("deleted_at", null).gte("start_time", since).order("start_time")
   ]);
   if (pr.error || pp.error) return toast("Daten konnten nicht geladen werden.");
   P = Object.fromEntries(pr.data.map((p) => [p.id, p]));
   props = pp.data;
-  const ids = props.map((x) => x.id);
-  const rs = ids.length ? await sb.from("responses").select("*").in("proposal_id", ids) : { data: [] };
-  R = rs.data || [];
+  R = props.flatMap((x) => x.responses || []);
   const dl = document.getElementById("games");
   if (dl) dl.replaceChildren(...[...new Set(props.map((x) => x.game))].map((g) => h("option", { value: g })));
   drawList(auto);
@@ -418,7 +418,7 @@ function drawList(auto = false) {
   put(list,
     h("h2", {}, "Geplant"),
     next.length ? next.map((x) => card(x, false)) : h("p", { class: "empty" }, "Noch nichts geplant. Tipp auf \"Ich will zocken\", um einen Vorschlag zu senden."),
-    past.length ? h("h2", {}, "Verlauf der letzten 2 Wochen") : null,
+    past.length ? h("h2", {}, `Verlauf der letzten ${VERLAUF_TAGE} Tage`) : null,
     past.map((x) => card(x, true))
   );
 }
