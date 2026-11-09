@@ -33,6 +33,7 @@ label{display:block;font-size:.88rem;color:var(--mute);margin:0 0 4px}
 .pips{display:flex;gap:6px;margin:12px 0 4px;flex-wrap:wrap}
 .pip{width:22px;height:22px;border-radius:7px;border:2px dashed var(--line)}
 .pip.on{background:var(--yes);border:2px solid var(--yes)}
+.pip.later{background:var(--later);border:2px solid var(--later)}
 .count{font-size:.9rem}.steht .count{color:var(--yes);font-weight:600}
 .pin{background:var(--bg);border-left:3px solid var(--later);padding:8px 10px;border-radius:6px;margin:10px 0;font-size:.92rem}
 .ans{display:flex;gap:8px;margin:10px 0 8px}
@@ -243,10 +244,11 @@ function card(p, isPast) {
   const yes = rs.filter((r) => r.answer === "yes");
   const mine = rs.find((r) => r.user_id === me.id);
   const creator = P[p.creator_id];
+  const later = rs.filter((r) => r.answer === "later");
   const steht = yes.length >= p.min_players;
-  const slots = Math.max(p.min_players, yes.length);
+  const slots = Math.max(p.min_players, yes.length + later.length);
   const pips = h("div", { class: "pips", "aria-hidden": "true" });
-  for (let i = 0; i < slots; i++) pips.append(h("div", { class: "pip" + (i < yes.length ? " on" : "") }));
+  for (let i = 0; i < slots; i++) pips.append(h("div", { class: "pip" + (i < yes.length ? " on" : i < yes.length + later.length ? " later" : "") }));
 
   const el = h("div", { class: "card" + (steht ? " steht" : "") + (isPast ? " past" : "") });
   el.append(
@@ -254,7 +256,7 @@ function card(p, isPast) {
       h("p", { class: "game" }, p.game),
       h("div", { class: "sub" }, `${fmt(p.start_time)} · von ${creator ? creator.name : "?"}`))),
     pips,
-    h("div", { class: "count" }, steht ? `${yes.length} dabei – das Spiel steht` : `${yes.length} von ${p.min_players} Spielern`)
+    h("div", { class: "count" }, (steht ? `${yes.length} dabei – das Spiel steht` : `${yes.length} von ${p.min_players} Spielern`) + (later.length ? `, ${later.length} später` : ""))
   );
   if (p.pinned_note) el.append(h("div", { class: "pin" }, p.pinned_note));
 
