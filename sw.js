@@ -4,11 +4,12 @@ self.addEventListener("activate", (e) => e.waitUntil(self.clients.claim()));
 self.addEventListener("push", (event) => {
   let d = {};
   try { d = event.data ? event.data.json() : {}; } catch (e) {}
+
   event.waitUntil(
     self.registration.showNotification(d.title || "Gamevote", {
       body: d.body || "",
       icon: "icon-192.png",
-      badge: "icon-192.png",
+      badge: "badge.png",
       tag: d.tag || "gamevote",
       data: { url: d.url || "./" }
     })
