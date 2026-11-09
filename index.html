@@ -303,7 +303,7 @@ function showMain() {
     ),
     h("div", { id: "pushbox" }),
     form,
-    h("div", { class: "row", style: "margin:0 0 4px" }, h("button", { class: "btn ghost small", onclick: showStats }, "Statistik")),
+    h("div", { class: "row", style: "margin:0 0 4px" }, h("button", { class: "btn ghost small", onclick: () => showStats() }, "Statistik")),
     h("div", { id: "list" })
   );
   drawPush();
@@ -332,15 +332,42 @@ function statRow(label, detail, frac) {
 function dur(min) {
   return min < 60 ? `${min} Min.` : `${num((min / 60).toFixed(1))} Std.`;
 }
-async function showStats() {
+function statError(error) {
+  const missing = error && (error.code === "PGRST202" || error.code === "42883" || /function/i.test(error.message || ""));
+  return h("p", { class: "empty" }, missing
+    ? "Die Statistik ist noch nicht eingerichtet. Bitte statistik.sql in Supabase ausführen."
+    : "Die Statistik konnte nicht geladen werden. Prüfe deine Verbindung und versuche es noch einmal.");
+}
+async function showStats(tab = "group") {
   clearInterval(timer);
   const body = h("div", {}, h("p", { class: "empty" }, "Statistik wird geladen …"));
+  const tabBtn = (key, label) => h("button", {
+    class: "btn small" + (tab === key ? "" : " ghost"), "aria-pressed": String(tab === key),
+    onclick: () => { if (tab !== key) showStats(key); }
+  }, label);
   app.replaceChildren(
     h("div", { class: "top" }, h("h1", {}, "Statistik"), h("button", { class: "btn ghost small", onclick: showMain }, "Zurück")),
+    h("div", { class: "row", style: "margin:0 0 6px" }, tabBtn("group", "Gruppe"), tabBtn("mine", "Meine Statistik")),
     body
   );
+  if (tab === "mine") {
+    const { data: m, error } = await sb.rpc("get_my_stats");
+    if (error || !m) return put(body, statError(error));
+    if (!m.stimmen && !m.vorschlaege) return put(body, h("p", { class: "empty" }, "Noch keine Daten. Sobald du bei vergangenen Vorschlägen abgestimmt hast, siehst du hier deine Zahlen."));
+    return put(body,
+      h("h2", {}, "Deine Zusagen"),
+      h("div", { class: "card" },
+        m.stimmen
+          ? statRow(`${m.ja} von ${m.stimmen} Stimmen mit Ja`, `${pct(m.ja, m.stimmen)} %`, m.ja / m.stimmen)
+          : h("p", { class: "sub" }, "Du hast bei fremden Vorschlägen noch nicht abgestimmt."),
+        h("div", { class: "sub", style: "margin-top:8px" }, `Davon ${m.spaeter}× Später und ${m.nein}× Nein. Eigene Vorschläge zählen nicht mit.`)),
+      h("h2", {}, "Deine Vorschläge"),
+      h("div", { class: "card" }, h("div", { class: "count" }, `${m.vorschlaege} abgeschlossene Vorschläge von dir`)),
+      h("p", { class: "sub" }, "Nur du siehst diese Seite.")
+    );
+  }
   const { data: s, error } = await sb.rpc("get_stats");
-  if (error || !s) return put(body, h("p", { class: "empty" }, "Die Statistik konnte nicht geladen werden."));
+  if (error || !s) return put(body, statError(error));
   const b = s.beteiligung || {};
   if (!b.vorschlaege) return put(body, h("p", { class: "empty" }, "Noch keine abgeschlossenen Vorschläge. Die Statistik füllt sich, sobald die ersten Spielzeiten vorbei sind."));
   const maxInit = Math.max(1, ...s.initiators.map((x) => x.anzahl));
@@ -352,10 +379,6 @@ async function showStats() {
       statRow(g.game, `${g.vorschlaege}× vorgeschlagen, ${pct(g.steht, g.vorschlaege)} % standen`, g.steht / g.vorschlaege))),
     h("h2", {}, "Wer schlägt am meisten vor"),
     h("div", { class: "card" }, s.initiators.map((x) => statRow(x.name, `${x.anzahl}×`, x.anzahl / maxInit))),
-    h("h2", {}, "Wer sagt am häufigsten zu"),
-    h("div", { class: "card" },
-      s.zusagen.length ? s.zusagen.map((x) => statRow(x.name, `${x.ja} von ${x.stimmen} · ${pct(x.ja, x.stimmen)} %`, x.ja / x.stimmen))
-        : h("p", { class: "sub" }, "Noch keine Stimmen zu fremden Vorschlägen.")),
     h("h2", {}, "Beliebteste Tage"),
     h("div", { class: "card" }, s.tage.map((x) => statRow(TAGE[x.tag - 1], `Ø ${num(x.avg_ja)} Zusagen (${x.vorschlaege}×)`, +x.avg_ja / maxTag))),
     h("h2", {}, "Beliebteste Uhrzeiten"),
