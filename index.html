@@ -51,6 +51,7 @@ label{display:block;font-size:.88rem;color:var(--mute);margin:0 0 4px}
 .toast{position:fixed;left:14px;right:14px;bottom:max(14px,env(safe-area-inset-bottom));max-width:532px;margin:auto;background:#3a1d24;border:1px solid var(--no);padding:12px;border-radius:10px;z-index:9}
 .empty{color:var(--mute);padding:18px 4px}
 .head .btn{flex:none}
+.guide.warn{border-color:var(--later);background:#2a2314}.guide.warn strong{color:var(--later)}
 .past{opacity:.8}.past .game{font-size:1rem}
 @media (prefers-reduced-motion:no-preference){.pip{transition:background .2s}}
 </style>
@@ -188,9 +189,9 @@ function installGuide(code) {
   const android = /android/i.test(ua);
   if (!ios && !android) return null;
   if (ios) {
-    return h("div", { class: "card guide" },
-      h("strong", {}, "Zuerst als App installieren"),
-      h("p", { class: "sub" }, "Auf dem iPhone kommen Benachrichtigungen nur in der installierten App an. Installiere Gamevote, bevor du beitrittst. Sonst musst du dich in der App noch einmal anmelden."),
+    return h("div", { class: "card guide warn", role: "note" },
+      h("strong", {}, "⚠ Wichtig: Erst installieren, dann beitreten"),
+      h("p", {}, "Wenn du hier in Safari beitrittst und Gamevote danach installierst, bist du in der App wieder abgemeldet und dein Name bleibt blockiert. Benachrichtigungen kommen auf dem iPhone außerdem nur in der installierten App an."),
       h("ol", {},
         h("li", {}, "Tippe in Safari auf Teilen (Quadrat mit Pfeil). Bei manchen iPhones steckt es hinter den drei Punkten."),
         h("li", {}, "Wähle \"Zum Home-Bildschirm\". Falls du ihn nicht siehst, tippe vorher auf \"Mehr\"."),
@@ -306,7 +307,8 @@ function showMain() {
     h("div", { id: "pushbox" }),
     form,
     h("div", { class: "row", style: "margin:0 0 4px" }, h("button", { class: "btn ghost small", onclick: () => showStats() }, "Statistik"), me.is_admin ? h("button", { class: "btn ghost small", onclick: () => showAdmin() }, "Admin") : null),
-    h("div", { id: "list" })
+    h("div", { id: "list" }),
+    h("div", { style: "margin-top:28px;text-align:center" }, h("button", { class: "btn ghost small", onclick: leaveGroup }, "Gruppe verlassen"))
   );
   drawPush();
   syncPush();
@@ -392,6 +394,22 @@ async function showStats(tab = "group") {
         ? `Bis das Spiel stand: Ø ${dur(b.dauer_min)} (aus ${b.dauer_n} Vorschlägen)`
         : `Dauer bis das Spiel steht: noch zu wenige Daten (${b.dauer_n} von 5)`))
   );
+}
+
+async function leaveGroup() {
+  if (!confirm("Gruppe wirklich verlassen?\n\nDein Name wird frei, dein Foto gelöscht und du bekommst keine Benachrichtigungen mehr. Deine bisherigen Stimmen zählen anonym in der Statistik weiter. Zurück kommst du nur mit dem Einladungslink und einem neuen Profil.")) return;
+  const { error } = await sb.rpc("leave_group");
+  if (error) return toast(/last admin/i.test(error.message || "")
+    ? "Du bist der einzige Admin. Ernenne zuerst jemand anderen."
+    : "Verlassen fehlgeschlagen. Versuche es noch einmal.");
+  const unsub = async () => {
+    try { const sub = await (await navigator.serviceWorker.ready).pushManager.getSubscription(); if (sub) await sub.unsubscribe(); } catch (e) {}
+  };
+  await Promise.race([unsub(), new Promise((r) => setTimeout(r, 2000))]);
+  await sb.auth.signOut();
+  clearInterval(timer);
+  me = null;
+  showJoin();
 }
 
 /* ---------- Admin ---------- */
