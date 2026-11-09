@@ -46,6 +46,7 @@ label{display:block;font-size:.88rem;color:var(--mute);margin:0 0 4px}
 .w .mute{color:var(--mute)}
 .row2{display:flex;gap:8px;align-items:flex-start}.row2 input{flex:1;margin:0 0 10px}.row2 .btn{flex:none;min-width:48px;padding:11px 0;margin-bottom:10px}
 .push{border-color:var(--blue)}.push p{margin:6px 0 10px}
+.stat{margin:0 0 12px}.card .stat:last-child{margin-bottom:0}.stat .line{display:flex;justify-content:space-between;gap:10px;margin-bottom:5px}.bar{height:8px;border-radius:4px;background:var(--line);overflow:hidden}.bar>i{display:block;height:100%;background:var(--blue)}
 .guide{border-color:var(--blue)}.guide p{margin:6px 0 10px}.guide ol{margin:8px 0 12px;padding-left:20px}.guide li{margin:5px 0}
 .toast{position:fixed;left:14px;right:14px;bottom:max(14px,env(safe-area-inset-bottom));max-width:532px;margin:auto;background:#3a1d24;border:1px solid var(--no);padding:12px;border-radius:10px;z-index:9}
 .empty{color:var(--mute);padding:18px 4px}
@@ -302,6 +303,7 @@ function showMain() {
     ),
     h("div", { id: "pushbox" }),
     form,
+    h("div", { class: "row", style: "margin:0 0 4px" }, h("button", { class: "btn ghost small", onclick: showStats }, "Statistik")),
     h("div", { id: "list" })
   );
   drawPush();
@@ -309,14 +311,69 @@ function showMain() {
   refresh();
   clearInterval(timer);
   timer = setInterval(() => { if (!document.hidden && !document.querySelector("#list input:focus")) refresh(true); }, 30000);
-  document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(true); });
+  if (!window.visHooked) {
+    window.visHooked = true;
+    document.addEventListener("visibilitychange", () => { if (!document.hidden && document.getElementById("list")) refresh(true); });
+  }
+}
+
+/* ---------- Statistik ---------- */
+const TAGE = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"];
+const num = (n) => String(n).replace(".", ",");
+const pct = (a, b) => (b ? Math.round((100 * a) / b) : 0);
+function bar(frac) {
+  const i = h("i");
+  i.style.width = Math.round(Math.max(0, Math.min(1, frac)) * 100) + "%";
+  return h("div", { class: "bar", "aria-hidden": "true" }, i);
+}
+function statRow(label, detail, frac) {
+  return h("div", { class: "stat" }, h("div", { class: "line" }, h("span", {}, label), h("span", { class: "sub" }, detail)), bar(frac));
+}
+function dur(min) {
+  return min < 60 ? `${min} Min.` : `${num((min / 60).toFixed(1))} Std.`;
+}
+async function showStats() {
+  clearInterval(timer);
+  const body = h("div", {}, h("p", { class: "empty" }, "Statistik wird geladen …"));
+  app.replaceChildren(
+    h("div", { class: "top" }, h("h1", {}, "Statistik"), h("button", { class: "btn ghost small", onclick: showMain }, "Zurück")),
+    body
+  );
+  const { data: s, error } = await sb.rpc("get_stats");
+  if (error || !s) return put(body, h("p", { class: "empty" }, "Die Statistik konnte nicht geladen werden."));
+  const b = s.beteiligung || {};
+  if (!b.vorschlaege) return put(body, h("p", { class: "empty" }, "Noch keine abgeschlossenen Vorschläge. Die Statistik füllt sich, sobald die ersten Spielzeiten vorbei sind."));
+  const maxInit = Math.max(1, ...s.initiators.map((x) => x.anzahl));
+  const maxTag = Math.max(0.1, ...s.tage.map((x) => +x.avg_ja));
+  const maxStd = Math.max(0.1, ...s.stunden.map((x) => +x.avg_ja));
+  put(body,
+    h("h2", {}, "Top-Spiele"),
+    h("div", { class: "card" }, s.games.map((g) =>
+      statRow(g.game, `${g.vorschlaege}× vorgeschlagen, ${pct(g.steht, g.vorschlaege)} % standen`, g.steht / g.vorschlaege))),
+    h("h2", {}, "Wer schlägt am meisten vor"),
+    h("div", { class: "card" }, s.initiators.map((x) => statRow(x.name, `${x.anzahl}×`, x.anzahl / maxInit))),
+    h("h2", {}, "Wer sagt am häufigsten zu"),
+    h("div", { class: "card" },
+      s.zusagen.length ? s.zusagen.map((x) => statRow(x.name, `${x.ja} von ${x.stimmen} · ${pct(x.ja, x.stimmen)} %`, x.ja / x.stimmen))
+        : h("p", { class: "sub" }, "Noch keine Stimmen zu fremden Vorschlägen.")),
+    h("h2", {}, "Beliebteste Tage"),
+    h("div", { class: "card" }, s.tage.map((x) => statRow(TAGE[x.tag - 1], `Ø ${num(x.avg_ja)} Zusagen (${x.vorschlaege}×)`, +x.avg_ja / maxTag))),
+    h("h2", {}, "Beliebteste Uhrzeiten"),
+    h("div", { class: "card" }, s.stunden.map((x) => statRow(`${String(x.stunde).padStart(2, "0")} Uhr`, `Ø ${num(x.avg_ja)} Zusagen (${x.vorschlaege}×)`, +x.avg_ja / maxStd))),
+    h("h2", {}, "Beteiligung"),
+    h("div", { class: "card" },
+      h("div", { class: "count" }, `Ø ${num(b.avg_stimmen)} Stimmen pro Vorschlag, davon Ø ${num(b.avg_ja)} Ja`),
+      h("div", { class: "sub", style: "margin-top:6px" }, b.dauer_n >= 5
+        ? `Bis das Spiel stand: Ø ${dur(b.dauer_min)} (aus ${b.dauer_n} Vorschlägen)`
+        : `Dauer bis das Spiel steht: noch zu wenige Daten (${b.dauer_n} von 5)`))
+  );
 }
 
 async function refresh(auto = false) {
   const since = new Date(Date.now() - 14 * 864e5).toISOString();
   const [pr, pp] = await Promise.all([
     sb.from("profiles").select("*"),
-    sb.from("proposals").select("*").gte("start_time", since).order("start_time")
+    sb.from("proposals").select("*").is("deleted_at", null).gte("start_time", since).order("start_time")
   ]);
   if (pr.error || pp.error) return toast("Daten konnten nicht geladen werden.");
   P = Object.fromEntries(pr.data.map((p) => [p.id, p]));
@@ -407,7 +464,7 @@ function card(p, isPast) {
       } }, "Notiz anheften"),
       h("button", { class: "btn ghost small", onclick: async () => {
         if (!confirm("Diesen Vorschlag löschen?")) return;
-        const { error } = await sb.from("proposals").delete().eq("id", p.id);
+        const { error } = await sb.rpc("delete_proposal", { p_id: p.id });
         if (error) return toast("Löschen fehlgeschlagen.");
         refresh();
       } }, "Löschen")));
