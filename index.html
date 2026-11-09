@@ -50,6 +50,7 @@ label{display:block;font-size:.88rem;color:var(--mute);margin:0 0 4px}
 .guide{border-color:var(--blue)}.guide p{margin:6px 0 10px}.guide ol{margin:8px 0 12px;padding-left:20px}.guide li{margin:5px 0}
 .toast{position:fixed;left:14px;right:14px;bottom:max(14px,env(safe-area-inset-bottom));max-width:532px;margin:auto;background:#3a1d24;border:1px solid var(--no);padding:12px;border-radius:10px;z-index:9}
 .empty{color:var(--mute);padding:18px 4px}
+.head .btn{flex:none}
 .past{opacity:.8}.past .game{font-size:1rem}
 @media (prefers-reduced-motion:no-preference){.pip{transition:background .2s}}
 </style>
@@ -115,7 +116,7 @@ async function start() {
   if (!session) return showJoin();
   const { data: p, error } = await sb.from("profiles").select("*").eq("id", session.user.id).maybeSingle();
   if (error) { app.replaceChildren(h("p", {}, "Verbindung fehlgeschlagen. Bitte Seite neu laden.")); return; }
-  if (!p) return showJoin();
+  if (!p || p.removed_at) return showJoin(!!(p && p.removed_at));
   me = p;
   showMain();
 }
@@ -219,7 +220,7 @@ function installGuide(code) {
 }
 
 /* ---------- Beitritt ---------- */
-function showJoin() {
+function showJoin(removed = false) {
   let avatar = null;
   const code = new URLSearchParams(location.search).get("c") || "";
   const name = h("input", { id: "name", maxlength: "30", autocomplete: "off", placeholder: "z. B. Tobias" });
@@ -258,6 +259,7 @@ function showJoin() {
   put(app,
     h("h1", {}, "Gamevote"),
     h("p", { class: "sub" }, "Wer zockt heute? Gib deinen Namen ein und mach ein Foto, dann bist du dabei."),
+    removed ? h("div", { class: "card guide" }, h("p", {}, "Du wurdest aus der Gruppe entfernt. Wenn du wieder mitmachen willst, trag unten deinen Namen ein und mach ein neues Foto.")) : null,
     installGuide(code),
     h("label", { for: "name" }, "Dein Name"), name,
     h("label", { for: "foto" }, "Dein Foto"), prev, file,
@@ -303,7 +305,7 @@ function showMain() {
     ),
     h("div", { id: "pushbox" }),
     form,
-    h("div", { class: "row", style: "margin:0 0 4px" }, h("button", { class: "btn ghost small", onclick: () => showStats() }, "Statistik")),
+    h("div", { class: "row", style: "margin:0 0 4px" }, h("button", { class: "btn ghost small", onclick: () => showStats() }, "Statistik"), me.is_admin ? h("button", { class: "btn ghost small", onclick: () => showAdmin() }, "Admin") : null),
     h("div", { id: "list" })
   );
   drawPush();
@@ -392,6 +394,68 @@ async function showStats(tab = "group") {
   );
 }
 
+/* ---------- Admin ---------- */
+async function showAdmin(tab = "props", lim = 50) {
+  if (!me || !me.is_admin) return showMain();
+  clearInterval(timer);
+  const body = h("div", {}, h("p", { class: "empty" }, "Wird geladen …"));
+  const tabBtn = (key, label) => h("button", {
+    class: "btn small" + (tab === key ? "" : " ghost"), "aria-pressed": String(tab === key),
+    onclick: () => { if (tab !== key) showAdmin(key); }
+  }, label);
+  app.replaceChildren(
+    h("div", { class: "top" }, h("h1", {}, "Admin"), h("button", { class: "btn ghost small", onclick: showMain }, "Zurück")),
+    h("div", { class: "row", style: "margin:0 0 6px" }, tabBtn("props", "Vorschläge"), tabBtn("members", "Mitglieder")),
+    body
+  );
+  const fail = () => put(body, h("p", { class: "empty" }, "Das konnte nicht geladen werden. Prüfe deine Verbindung und versuche es noch einmal."));
+
+  if (tab === "members") {
+    const { data, error } = await sb.from("profiles").select("id, name, avatar, is_admin, removed_at, created_at").order("created_at");
+    if (error || !data) return fail();
+    const active = data.filter((x) => !x.removed_at);
+    const gone = data.length - active.length;
+    return put(body,
+      h("h2", {}, `Mitglieder (${active.length})`),
+      active.map((m) => h("div", { class: "card" }, h("div", { class: "head" },
+        av(m),
+        h("div", { class: "t" }, h("p", { class: "game" }, m.name),
+          h("div", { class: "sub" }, (m.is_admin ? "Admin · " : "") + "dabei seit " + new Date(m.created_at).toLocaleDateString("de-DE"))),
+        m.id === me.id ? null : h("button", { class: "btn ghost small", onclick: async () => {
+          if (!confirm(`„${m.name}“ entfernen?\n\nDer Name wird frei, das Foto gelöscht und der Zugang gesperrt. Die Statistik bleibt erhalten.`)) return;
+          const { error: e } = await sb.rpc("remove_member", { p_id: m.id });
+          if (e) return toast("Entfernen fehlgeschlagen.");
+          showAdmin("members");
+        } }, "Entfernen")))),
+      gone ? h("p", { class: "sub" }, `Entfernte Mitglieder: ${gone}. Ihre Stimmen zählen anonym weiter in der Statistik.`) : null
+    );
+  }
+
+  const [act, del, pf] = await Promise.all([
+    sb.from("proposals").select("id, game, start_time, creator_id").is("deleted_at", null).order("start_time", { ascending: false }).limit(lim),
+    sb.from("proposals").select("id, game, start_time, creator_id").not("deleted_at", "is", null).order("deleted_at", { ascending: false }).limit(lim),
+    sb.from("profiles").select("id, name")
+  ]);
+  if (act.error || del.error || pf.error) return fail();
+  const name = Object.fromEntries(pf.data.map((x) => [x.id, x.name]));
+  const row = (p, restore) => h("div", { class: "card" }, h("div", { class: "head" },
+    h("div", { class: "t" }, h("p", { class: "game" }, p.game), h("div", { class: "sub" }, `${fmt(p.start_time)} · von ${name[p.creator_id] || "?"}`)),
+    h("button", { class: "btn ghost small", onclick: async () => {
+      if (!restore && !confirm(`Vorschlag „${p.game}“ löschen?`)) return;
+      const { error: e } = await sb.rpc(restore ? "restore_proposal" : "delete_proposal", { p_id: p.id });
+      if (e) return toast(restore ? "Wiederherstellen fehlgeschlagen." : "Löschen fehlgeschlagen.");
+      showAdmin("props", lim);
+    } }, restore ? "Wiederherstellen" : "Löschen")));
+  put(body,
+    h("h2", {}, "Aktive Vorschläge"),
+    act.data.length ? act.data.map((p) => row(p, false)) : h("p", { class: "empty" }, "Keine aktiven Vorschläge."),
+    h("h2", {}, "Gelöschte Vorschläge"),
+    del.data.length ? del.data.map((p) => row(p, true)) : h("p", { class: "empty" }, "Keine gelöschten Vorschläge."),
+    act.data.length >= lim || del.data.length >= lim
+      ? h("button", { class: "btn ghost small", onclick: () => showAdmin("props", lim + 50) }, "Mehr anzeigen") : null
+  );
+}
+
 const VERLAUF_TAGE = 30; // so viele Tage Verlauf zeigt die App (ältere Daten bleiben in der Datenbank)
 async function refresh(auto = false) {
   const since = new Date(Date.now() - VERLAUF_TAGE * 864e5).toISOString();
@@ -401,6 +465,9 @@ async function refresh(auto = false) {
     sb.from("proposals").select("*, responses(*)").is("deleted_at", null).gte("start_time", since).order("start_time")
   ]);
   if (pr.error || pp.error) return toast("Daten konnten nicht geladen werden.");
+  const mineP = pr.data.find((x) => x.id === me.id);
+  if (mineP && mineP.removed_at) { clearInterval(timer); me = null; return showJoin(true); }
+  if (mineP) me = mineP;
   P = Object.fromEntries(pr.data.map((p) => [p.id, p]));
   props = pp.data;
   R = props.flatMap((x) => x.responses || []);
