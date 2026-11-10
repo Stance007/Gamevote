@@ -417,6 +417,7 @@ function changePhoto() {
       const { error } = await sb.rpc("set_avatar", { p_avatar: avatar });
       if (error) return toast("Das Foto konnte nicht gespeichert werden.");
       me = { ...me, avatar };
+      AV[me.id] = avatar;
       showMain();
     } catch (e) {
       toast("Das Bild konnte nicht gelesen werden. Versuche ein anderes Foto.");
@@ -528,19 +529,26 @@ async function showAdmin(tab = "props", lim = 50) {
   );
 }
 
+const AV_TTL = 10 * 60 * 1000; // Profilfotos höchstens alle 10 Minuten neu laden (spart Datenvolumen)
+let AV = {}, avAt = 0;
 const VERLAUF_TAGE = 30; // so viele Tage Verlauf zeigt die App (ältere Daten bleiben in der Datenbank)
 async function refresh(auto = false) {
   const since = new Date(Date.now() - VERLAUF_TAGE * 864e5).toISOString();
   const [pr, pp] = await Promise.all([
-    sb.from("profiles").select("*"),
+    sb.from("profiles").select("id, name, is_admin, removed_at"), // ohne Fotos: klein und schnell
     // Antworten gleich mitladen: eine Abfrage statt zwei, und keine lange ID-Liste in der URL
     sb.from("proposals").select("*, responses(*)").is("deleted_at", null).gte("start_time", since).order("start_time")
   ]);
   if (pr.error || pp.error) return toast("Daten konnten nicht geladen werden.");
   const mineP = pr.data.find((x) => x.id === me.id);
   if (mineP && mineP.removed_at) { clearInterval(timer); me = null; return showJoin(true); }
-  if (mineP) me = mineP;
-  P = Object.fromEntries(pr.data.map((p) => [p.id, p]));
+  // Fotos nur laden, wenn sie alt sind oder jemand Neues dabei ist
+  if (Date.now() - avAt > AV_TTL || pr.data.some((x) => !(x.id in AV))) {
+    const pa = await sb.from("profiles").select("id, avatar");
+    if (!pa.error && pa.data) { AV = Object.fromEntries(pa.data.map((x) => [x.id, x.avatar])); avAt = Date.now(); }
+  }
+  if (mineP) me = { ...mineP, avatar: mineP.id in AV ? AV[mineP.id] : (me.avatar ?? null) };
+  P = Object.fromEntries(pr.data.map((p) => [p.id, { ...p, avatar: AV[p.id] ?? null }]));
   props = pp.data;
   R = props.flatMap((x) => x.responses || []);
   const dl = document.getElementById("games");
