@@ -309,14 +309,14 @@ function showMain() {
   );
   app.replaceChildren(
     h("div", { class: "top" },
-      h("div", { class: "me" }, av(me), h("div", {}, h("h1", {}, "Gamevote"), h("div", { class: "sub" }, me.name))),
+      h("div", { class: "me" }, myAvatar(), h("div", {}, h("h1", {}, "Gamevote"), h("div", { class: "sub" }, me.name))),
       h("button", { class: "btn", onclick: () => { form.hidden = !form.hidden; } }, "Ich will zocken")
     ),
     h("div", { id: "pushbox" }),
     form,
     h("div", { class: "row", style: "margin:0 0 4px" }, h("button", { class: "btn ghost small", onclick: () => showStats() }, "Statistik"), me.is_admin ? h("button", { class: "btn ghost small", onclick: () => showAdmin() }, "Admin") : null),
     h("div", { id: "list" }),
-    h("div", { style: "margin-top:28px;text-align:center" }, h("button", { class: "btn ghost small", onclick: leaveGroup }, "Gruppe verlassen"))
+    h("div", { style: "margin-top:28px;display:flex;gap:10px;justify-content:center" }, h("button", { class: "btn ghost small", onclick: changePhoto }, "Foto ändern"), h("button", { class: "btn ghost small", onclick: leaveGroup }, "Gruppe verlassen"))
   );
   drawPush();
   syncPush();
@@ -402,6 +402,38 @@ async function showStats(tab = "group") {
         ? `Bis das Spiel stand: Ø ${dur(b.dauer_min)} (aus ${b.dauer_n} Vorschlägen)`
         : `Dauer bis das Spiel steht: noch zu wenige Daten (${b.dauer_n} von 5)`))
   );
+}
+
+function changePhoto() {
+  const old = document.getElementById("photoinp");
+  if (old) old.remove();
+  const inp = h("input", { type: "file", accept: "image/*", id: "photoinp", style: "display:none" });
+  inp.addEventListener("change", async () => {
+    const f = inp.files[0];
+    inp.remove();
+    if (!f) return;
+    try {
+      const avatar = await shrink(f);
+      const { error } = await sb.rpc("set_avatar", { p_avatar: avatar });
+      if (error) return toast("Das Foto konnte nicht gespeichert werden.");
+      me = { ...me, avatar };
+      showMain();
+    } catch (e) {
+      toast("Das Bild konnte nicht gelesen werden. Versuche ein anderes Foto.");
+    }
+  });
+  document.body.append(inp);
+  inp.click();
+}
+function myAvatar() {
+  const e = av(me);
+  e.style.cursor = "pointer";
+  e.setAttribute("role", "button");
+  e.setAttribute("tabindex", "0");
+  e.setAttribute("aria-label", "Profilbild ändern");
+  e.addEventListener("click", changePhoto);
+  e.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); changePhoto(); } });
+  return e;
 }
 
 async function leaveGroup() {
