@@ -51,6 +51,8 @@ label{display:block;font-size:.88rem;color:var(--mute);margin:0 0 4px}
 .toast{position:fixed;left:14px;right:14px;bottom:max(14px,env(safe-area-inset-bottom));max-width:532px;margin:auto;background:#3a1d24;border:1px solid var(--no);padding:12px;border-radius:10px;z-index:9}
 .empty{color:var(--mute);padding:18px 4px}
 .head .btn{flex:none}
+.btn.danger{background:transparent;border:1px solid var(--no);color:var(--no)}
+.acts{display:flex;flex-direction:column;gap:6px;flex:none}
 .guide.warn{border-color:var(--later);background:#2a2314}.guide.warn strong{color:var(--later)}
 .past{opacity:.8}.past .game{font-size:1rem}
 @media (prefers-reduced-motion:no-preference){.pip{transition:background .2s}}
@@ -264,6 +266,7 @@ function showJoin(removed = false) {
     installGuide(code),
     h("label", { for: "name" }, "Dein Name"), name,
     h("label", { for: "foto" }, "Dein Foto"), prev, file,
+    h("p", { class: "sub", style: "margin:-2px 0 14px" }, "Dein Profilbild wird in der Datenbank gespeichert und beim Verlassen der Gruppe gelöscht."),
     code ? null : [h("label", { for: "code" }, "Einladungscode"), codeIn],
     go
   );
@@ -288,7 +291,12 @@ function showMain() {
     const { data, error } = await sb.from("proposals").insert({
       creator_id: me.id, game: g, start_time: new Date(timeIn.value).toISOString(), min_players: Math.max(2, +minIn.value || 2)
     }).select("id").single();
-    if (error) { send.disabled = false; return toast("Vorschlag konnte nicht erstellt werden: " + error.message); }
+    if (error) {
+      send.disabled = false;
+      return toast(/rate_limit/i.test(error.message || "")
+        ? "Du hast in der letzten Stunde schon 3 Vorschläge gesendet. Warte etwas oder hefte eine Notiz an einen deiner Vorschläge."
+        : "Vorschlag konnte nicht erstellt werden: " + error.message);
+    }
     await sb.from("responses").insert({ proposal_id: data.id, user_id: me.id, answer: "yes" });
     send.disabled = false; form.hidden = true; gameIn.value = "";
     refresh();
@@ -439,12 +447,19 @@ async function showAdmin(tab = "props", lim = 50) {
         av(m),
         h("div", { class: "t" }, h("p", { class: "game" }, m.name),
           h("div", { class: "sub" }, (m.is_admin ? "Admin · " : "") + "dabei seit " + new Date(m.created_at).toLocaleDateString("de-DE"))),
-        m.id === me.id ? null : h("button", { class: "btn ghost small", onclick: async () => {
-          if (!confirm(`„${m.name}“ entfernen?\n\nDer Name wird frei, das Foto gelöscht und der Zugang gesperrt. Die Statistik bleibt erhalten.`)) return;
-          const { error: e } = await sb.rpc("remove_member", { p_id: m.id });
-          if (e) return toast("Entfernen fehlgeschlagen.");
-          showAdmin("members");
-        } }, "Entfernen")))),
+        h("div", { class: "acts" },
+          m.avatar ? h("button", { class: "btn ghost small", onclick: async () => {
+            if (!confirm(`Profilbild von „${m.name}“ zurücksetzen?\n\nDas Foto wird gelöscht, die App zeigt dann nur noch den Anfangsbuchstaben.`)) return;
+            const { error: e } = await sb.rpc("reset_avatar", { p_id: m.id });
+            if (e) return toast("Zurücksetzen fehlgeschlagen.");
+            showAdmin("members");
+          } }, "Foto zurücksetzen") : null,
+          m.id === me.id ? null : h("button", { class: "btn ghost small", onclick: async () => {
+            if (!confirm(`„${m.name}“ entfernen?\n\nDer Name wird frei, das Foto gelöscht und der Zugang gesperrt. Die Statistik bleibt erhalten.`)) return;
+            const { error: e } = await sb.rpc("remove_member", { p_id: m.id });
+            if (e) return toast("Entfernen fehlgeschlagen.");
+            showAdmin("members");
+          } }, "Entfernen"))))),
       gone ? h("p", { class: "sub" }, `Entfernte Mitglieder: ${gone}. Ihre Stimmen zählen anonym weiter in der Statistik.`) : null
     );
   }
@@ -458,12 +473,19 @@ async function showAdmin(tab = "props", lim = 50) {
   const name = Object.fromEntries(pf.data.map((x) => [x.id, x.name]));
   const row = (p, restore) => h("div", { class: "card" }, h("div", { class: "head" },
     h("div", { class: "t" }, h("p", { class: "game" }, p.game), h("div", { class: "sub" }, `${fmt(p.start_time)} · von ${name[p.creator_id] || "?"}`)),
-    h("button", { class: "btn ghost small", onclick: async () => {
-      if (!restore && !confirm(`Vorschlag „${p.game}“ löschen?`)) return;
-      const { error: e } = await sb.rpc(restore ? "restore_proposal" : "delete_proposal", { p_id: p.id });
-      if (e) return toast(restore ? "Wiederherstellen fehlgeschlagen." : "Löschen fehlgeschlagen.");
-      showAdmin("props", lim);
-    } }, restore ? "Wiederherstellen" : "Löschen")));
+    h("div", { class: "acts" },
+      h("button", { class: "btn ghost small", onclick: async () => {
+        if (!restore && !confirm(`Vorschlag „${p.game}“ löschen?`)) return;
+        const { error: e } = await sb.rpc(restore ? "restore_proposal" : "delete_proposal", { p_id: p.id });
+        if (e) return toast(restore ? "Wiederherstellen fehlgeschlagen." : "Löschen fehlgeschlagen.");
+        showAdmin("props", lim);
+      } }, restore ? "Wiederherstellen" : "Löschen"),
+      restore ? h("button", { class: "btn danger small", onclick: async () => {
+        if (!confirm(`Vorschlag „${p.game}“ endgültig löschen?\n\nDas lässt sich nicht rückgängig machen. Die Statistik ändert sich nicht, weil gelöschte Vorschläge dort ohnehin nicht zählen.`)) return;
+        const { error: e } = await sb.rpc("purge_proposal", { p_id: p.id });
+        if (e) return toast("Endgültig löschen fehlgeschlagen.");
+        showAdmin("props", lim);
+      } }, "Endgültig löschen") : null)));
   put(body,
     h("h2", {}, "Aktive Vorschläge"),
     act.data.length ? act.data.map((p) => row(p, false)) : h("p", { class: "empty" }, "Keine aktiven Vorschläge."),
