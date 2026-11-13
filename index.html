@@ -299,6 +299,7 @@ function showMain() {
     }
     await sb.from("responses").insert({ proposal_id: data.id, user_id: me.id, answer: "yes" });
     send.disabled = false; form.hidden = true; gameIn.value = "";
+    histAt = 0;
     refresh();
   } }, "Vorschlag senden");
   form.append(
@@ -456,6 +457,7 @@ async function leaveGroup() {
 /* ---------- Admin ---------- */
 async function showAdmin(tab = "props", lim = 50) {
   if (!me || !me.is_admin) return showMain();
+  histAt = 0; // nach Admin-Aktionen soll der Verlauf frisch geladen werden
   clearInterval(timer);
   const body = h("div", {}, h("p", { class: "empty" }, "Wird geladen …"));
   const tabBtn = (key, label) => h("button", {
@@ -532,14 +534,26 @@ async function showAdmin(tab = "props", lim = 50) {
 const AV_TTL = 10 * 60 * 1000; // Profilfotos höchstens alle 10 Minuten neu laden (spart Datenvolumen)
 let AV = {}, avAt = 0;
 const VERLAUF_TAGE = 30; // so viele Tage Verlauf zeigt die App (ältere Daten bleiben in der Datenbank)
+const HIST_TTL = 10 * 60 * 1000; // älterer Verlauf: höchstens alle 10 Minuten neu laden
+const LIVE_STUNDEN = 2; // so lange nach dem Start gilt ein Vorschlag noch als "Geplant"
+let HIST = [], histAt = 0, histCut = "";
 async function refresh(auto = false) {
-  const since = new Date(Date.now() - VERLAUF_TAGE * 864e5).toISOString();
-  const [pr, pp] = await Promise.all([
+  const now = Date.now();
+  const needHist = now - histAt > HIST_TTL;
+  // Grenze zwischen "live" (alle 30 Sekunden) und "älterer Verlauf" (alle 10 Minuten).
+  // Beide Teile sind lückenlos und überschneiden sich nicht: Verlauf = alles vor der Grenze,
+  // live = alles ab der Grenze. Die Grenze rückt nur beim Neuladen des Verlaufs weiter.
+  const cut = needHist ? new Date(now - LIVE_STUNDEN * 36e5).toISOString() : histCut;
+  const since = new Date(now - VERLAUF_TAGE * 864e5).toISOString();
+  // Antworten gleich mitladen: eine Abfrage statt zwei, und keine lange ID-Liste in der URL
+  const proposals = () => sb.from("proposals").select("*, responses(*)").is("deleted_at", null).order("start_time");
+  const [pr, pp, ph] = await Promise.all([
     sb.from("profiles").select("id, name, is_admin, removed_at"), // ohne Fotos: klein und schnell
-    // Antworten gleich mitladen: eine Abfrage statt zwei, und keine lange ID-Liste in der URL
-    sb.from("proposals").select("*, responses(*)").is("deleted_at", null).gte("start_time", since).order("start_time")
+    proposals().gte("start_time", cut),
+    needHist ? proposals().gte("start_time", since).lt("start_time", cut) : null
   ]);
-  if (pr.error || pp.error) return toast("Daten konnten nicht geladen werden.");
+  if (pr.error || pp.error || (ph && ph.error)) return toast("Daten konnten nicht geladen werden.");
+  if (ph) { HIST = ph.data || []; histCut = cut; histAt = now; }
   const mineP = pr.data.find((x) => x.id === me.id);
   if (mineP && mineP.removed_at) { clearInterval(timer); me = null; return showJoin(true); }
   // Fotos nur laden, wenn sie alt sind oder jemand Neues dabei ist
@@ -549,7 +563,7 @@ async function refresh(auto = false) {
   }
   if (mineP) me = { ...mineP, avatar: mineP.id in AV ? AV[mineP.id] : (me.avatar ?? null) };
   P = Object.fromEntries(pr.data.map((p) => [p.id, { ...p, avatar: AV[p.id] ?? null }]));
-  props = pp.data;
+  props = HIST.concat(pp.data);
   R = props.flatMap((x) => x.responses || []);
   const dl = document.getElementById("games");
   if (dl) dl.replaceChildren(...[...new Set(props.map((x) => x.game))].map((g) => h("option", { value: g })));
